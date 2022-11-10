@@ -1,3 +1,0 @@
-name: neutron_iac
-description: A TypeScript program to deploy a static website on AWS
-runtime: nodejs
