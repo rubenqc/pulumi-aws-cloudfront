@@ -8,10 +8,10 @@ import getConfig from './config/config';
 // Import the program's configuration settings.
 const config = new pulumi.Config();
 const projectConfig = getConfig(); // get project config
-const path = config.get('path') || '../neutron_web/dist';
-const projectName = config.get('projectName');
-const indexDocument = config.get('indexDocument') || 'index.html';
-const errorDocument = config.get('errorDocument') || 'error.html';
+const path = config.get('path') || '../dist';
+const projectName = projectConfig.project.name;
+const indexDocument = projectConfig.project.indexFile;
+const errorDocument = projectConfig.project.errorFile;
 
 // Get Stack
 const stack = pulumi.getStack();
