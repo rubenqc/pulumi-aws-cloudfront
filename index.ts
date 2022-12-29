@@ -82,13 +82,25 @@ const cdn = new aws.cloudfront.Distribution('cdn', {
 });
 
 if (projectConfig.dns.cloudflare.enabled) {
-  const record = new cloudflare.Record(projectConfig.dns.cloudflare.domain, {
-    name: projectConfig.dns.cloudflare.recordName,
-    zoneId: projectConfig.dns.cloudflare.zoneId,
-    type: projectConfig.dns.cloudflare.recordType,
-    value: cdn.domainName,
-    ttl: 3600,
+  const cfProvider = new cloudflare.Provider('cloudflare', {
+    apiKey: process.env.CLOUDFLARE_API_KEY,
+    email: process.env.CLOUDFLARE_EMAIL,
+    accountId: process.env.CLOUDFLARE_ACCOUNT_ID,
   });
+
+  const record = new cloudflare.Record(
+    projectConfig.dns.cloudflare.domain,
+    {
+      name: projectConfig.dns.cloudflare.recordName,
+      zoneId: projectConfig.dns.cloudflare.zoneId,
+      type: projectConfig.dns.cloudflare.recordType,
+      value: cdn.domainName,
+      ttl: 3600,
+    },
+    {
+      provider: cfProvider,
+    },
+  );
 }
 
 // Export the URLs and hostnames of the bucket and distribution.

@@ -14,6 +14,9 @@ type Config = {
       recordName: string;
       recordType: string;
       zoneId: string;
+      apiKey: string;
+      email: string;
+      accountId: string;
     };
   };
 };
@@ -34,6 +37,9 @@ export default (): Config => ({
       recordType: process.env.CLOUDFLARE_RECORD_TYPE || 'CNAME',
       recordName: process.env.CLOUDFLARE_RECORD_NAME || 'record_name',
       zoneId: process.env.CLOUDFLARE_ZONE_ID || 'zone_id',
+      apiKey: process.env.CLOUDFLARE_API_KEY || 'api_key',
+      email: process.env.CLOUDFLARE_EMAIL || 'email',
+      accountId: process.env.CLOUDFLARE_ACCOUNT_ID || 'account_id',
     },
   },
 });
