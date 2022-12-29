@@ -1,4 +1,12 @@
 type Config = {
+  project: {
+    name: string;
+    stack: string;
+    description: string;
+    indexFile: string;
+    errorFile: string;
+    distPath: string;
+  };
   dns: {
     cloudflare: {
       enabled: boolean;
@@ -11,6 +19,14 @@ type Config = {
 };
 
 export default (): Config => ({
+  project: {
+    name: process.env.PROJECT_NAME || 'test-project',
+    stack: process.env.PROJECT_STACK || 'dev',
+    description: process.env.PROJECT_DESCRIPTION || 'project description',
+    indexFile: process.env.PROJECT_INDEX_FILE || 'index.html',
+    errorFile: process.env.PROJECT_ERROR_FILE || 'error.html',
+    distPath: process.env.PROJECT_DIST_PATH || '../dist',
+  },
   dns: {
     cloudflare: {
       enabled: process.env.CLOUDFLARE_ENABLED === 'true',
