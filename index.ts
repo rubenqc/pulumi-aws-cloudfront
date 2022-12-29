@@ -17,13 +17,13 @@ const errorDocument = projectConfig.project.errorFile;
 // Get Stack
 const stack = pulumi.getStack();
 
-// Create bucket name
-const bucketName = new random.RandomPet(`${projectName}-${stack}`);
+// Create bucket id
+const randomId = new random.RandomPet(`${projectName}-${stack}`);
 
 // Create an S3 bucket and configure it as a website.
 const bucket = new aws.s3.Bucket(`${projectName}-${stack}`, {
   acl: 'public-read',
-  bucket: bucketName,
+  bucket: `${projectName}-${stack}-${randomId.id}`,
   website: {
     indexDocument: indexDocument,
     errorDocument: errorDocument,
