@@ -2,6 +2,7 @@ import * as cloudflare from '@pulumi/cloudflare';
 import * as pulumi from '@pulumi/pulumi';
 import * as aws from '@pulumi/aws';
 import * as synced_folder from '@pulumi/synced-folder';
+import * as random from '@pulumi/random';
 
 import getConfig from './config/config';
 
@@ -16,10 +17,13 @@ const errorDocument = projectConfig.project.errorFile;
 // Get Stack
 const stack = pulumi.getStack();
 
+// Create bucket name
+const bucketName = new random.RandomPet(`${projectName}-${stack}`);
+
 // Create an S3 bucket and configure it as a website.
 const bucket = new aws.s3.Bucket(`${projectName}-${stack}`, {
   acl: 'public-read',
-  bucket: `${projectName}-${stack}`,
+  bucket: bucketName,
   website: {
     indexDocument: indexDocument,
     errorDocument: errorDocument,
