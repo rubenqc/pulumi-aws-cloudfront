@@ -20,13 +20,15 @@ on:
         required: true
       VAULT_SECRET_ID:
         required: true
-      VAULT_SECRET_PULUMI:
+      VAULT_SECRET_PULUMI_BASE:
+        required: true
+      VAULT_SECRET_PULUMI_APP:
         required: true
       VAULT_SECRET_APP:
         required: true
 
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     env:
@@ -58,17 +60,35 @@ jobs:
           # Get token for vault
           VAULT_TOKEN=$(vault write auth/approle/login role_id="${{ secrets.VAULT_ROLE_ID }}" secret_id="${{ secrets.VAULT_SECRET_ID }}" -format=json |  python -c "import json,sys;obj=json.load(sys.stdin);print(obj['auth']['client_token']);") 
           vault login -no-print token=$VAULT_TOKEN
-          # Get envs of secrets of pulumi
-          VAULT_DATA_JSON=$(vault kv get -format=json ${{ secrets.VAULT_SECRET_PULUMI }} | python -c "import json,sys;obj=json.load(sys.stdin);print(obj['data']['data']);" | sed "s/'/\"/g" | jq .)
+          # Get envs of secrets of pulumi base
+          VAULT_DATA_JSON=$(vault kv get -format=json ${{ secrets.VAULT_SECRET_PULUMI_BASE }} | python -c "import json,sys;obj=json.load(sys.stdin);print(obj['data']['data']);" | sed "s/'/\"/g" | jq .)
+          # Inject envs to github action
+          echo $VAULT_DATA_JSON | jq -r 'to_entries|map("\(.key)=\(.value|tostring)")|.[]' >> $GITHUB_ENV
+          # Export values to file
+          echo $VAULT_DATA_JSON | jq -r 'to_entries|map("\(.value|tostring)")|.[]' >> .envs_values
+          # Add mask to values of file
+          while read value; do
+            echo "::add-mask::$value"
+          done < .envs_values
+          # Get envs of secrets of pulumi app
+          VAULT_DATA_JSON=$(vault kv get -format=json ${{ secrets.VAULT_SECRET_PULUMI_APP }} | python -c "import json,sys;obj=json.load(sys.stdin);print(obj['data']['data']);" | sed "s/'/\"/g" | jq .)
           # Inject envs to github action
           echo $VAULT_DATA_JSON | jq -r 'to_entries|map("\(.key)=\(.value|tostring)")|.[]' >> $GITHUB_ENV
           # Export values to file
           echo $VAULT_DATA_JSON | jq -r 'to_entries|map("\(.value|tostring)")|.[]' >> .envs_values
           # Get envs of secrets of app
           VAULT_DATA_JSON=$(vault kv get -format=json ${{ secrets.VAULT_SECRET_APP }} | python -c "import json,sys;obj=json.load(sys.stdin);print(obj['data']['data']);" | sed "s/'/\"/g" | jq .)
-          echo APP_ENVARS=$VAULT_DATA_JSON >> $GITHUB_ENV
+          # Inject envs to github action
+          echo $VAULT_DATA_JSON | jq -r 'to_entries|map("\(.key)=\(.value|tostring)")|.[]' >> $GITHUB_ENV
         env:
           VAULT_ADDR: https://${{ secrets.VAULT_ADDR }}:8443
+      - name: Install Pulumi dependencies
+        working-directory: ./pulumi-cloudfront
+        run: npm install
+      - name: Update Pulumi version
+        uses: pulumi/setup-pulumi@v2
+        with:
+          pulumi-version: 3.46.1
       - name: Install App dependencies
         run: yarn install
       - name: Build App
@@ -96,11 +116,3 @@ jobs:
           ENVIRONMENT: ${{ inputs.environment }}
           PULUMI_CONFIG_PASSPHRASE: ${{ env.PULUMI_CONFIG_PASSPHRASE }}
           PULUMI_BACKEND_URL: '${{ env.PULUMI_BACKEND_URL }}'
-          APP_NAME: rbac
-          APP_DIR_PATH: '../dist'
-          APP_INDEX_DOCUMENT: index.html
-          APP_ERROR_DOCUMENT: error.html
-          APP_DOMAIN_URL: hackmetrix.com
-          APP_SUBDOMAIN_NAME: auth
-          PULUMI_DEBUG: 'true'
-

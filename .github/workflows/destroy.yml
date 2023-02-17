@@ -20,11 +20,9 @@ on:
         required: true
       VAULT_SECRET_ID:
         required: true
-      VAULT_SECRET_PULUMI_CLUSTER:
+      VAULT_SECRET_PULUMI_BASE:
         required: true
       VAULT_SECRET_PULUMI_APP:
-        required: true
-      VAULT_SECRET_APP:
         required: true
 
 jobs:
@@ -39,7 +37,7 @@ jobs:
           mkdir $HOME/.ssh
           echo "${{ secrets.SSH_KEY_FOR_SUBMODULE }}" > $HOME/.ssh/id_rsa
           chmod 600 $HOME/.ssh/id_rsa
-          git clone git@github.com:Hackmetrix-LLC/pulumi-ecs-service.git ./pulumi-ecs
+          git clone git@github.com:Hackmetrix-LLC/pulumi-aws-cloudfront.git ./pulumi-cloudfront
       - name: Connect to Bastion Host for Vault
         run: |
           cd $HOME/.ssh
@@ -59,7 +57,7 @@ jobs:
           VAULT_TOKEN=$(vault write auth/approle/login role_id="${{ secrets.VAULT_ROLE_ID }}" secret_id="${{ secrets.VAULT_SECRET_ID }}" -format=json |  python -c "import json,sys;obj=json.load(sys.stdin);print(obj['auth']['client_token']);") 
           vault login -no-print token=$VAULT_TOKEN
           # Get envs of secrets of pulumi cluster
-          VAULT_DATA_JSON=$(vault kv get -format=json ${{ secrets.VAULT_SECRET_PULUMI_CLUSTER }} | python -c "import json,sys;obj=json.load(sys.stdin);print(obj['data']['data']);" | sed "s/'/\"/g" | jq .)
+          VAULT_DATA_JSON=$(vault kv get -format=json ${{ secrets.VAULT_SECRET_PULUMI_BASE }} | python -c "import json,sys;obj=json.load(sys.stdin);print(obj['data']['data']);" | sed "s/'/\"/g" | jq .)
           # Inject envs to github action
           echo $VAULT_DATA_JSON | jq -r 'to_entries|map("\(.key)=\(.value|tostring)")|.[]' >> $GITHUB_ENV
           # Export values to file
@@ -83,25 +81,25 @@ jobs:
           aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
       - name: Install Pulumi dependencies
-        working-directory: ./pulumi-ecs
+        working-directory: ./pulumi-cloudfront
         run: npm install
       - name: Update Pulumi version
         uses: pulumi/setup-pulumi@v2
         with:
           pulumi-version: 3.46.1
       - name: Config Pulumi Stack
-        working-directory: ./pulumi-ecs
+        working-directory: ./pulumi-cloudfront
         run: |
           pulumi stack select ${{ env.PULUMI_STACK }} --create
           pulumi config set aws:region ${{ secrets.AWS_REGION }}
         env:
           PULUMI_CONFIG_PASSPHRASE: ${{ env.PULUMI_CONFIG_PASSPHRASE }}
-          PULUMI_BACKEND_URL: '${{ env.PULUMI_BACKEND_URL_APP }}'
+          PULUMI_BACKEND_URL: '${{ env.PULUMI_BACKEND_URL }}'
       - name: Destroy Infrastructure
-        working-directory: ./pulumi-ecs
+        working-directory: ./pulumi-cloudfront
         run: |
           pulumi cancel -y --non-interactive
           pulumi destroy -y --non-interactive --skip-preview
         env:
           PULUMI_CONFIG_PASSPHRASE: ${{ env.PULUMI_CONFIG_PASSPHRASE }}
-          PULUMI_BACKEND_URL: '${{ env.PULUMI_BACKEND_URL_APP }}'
+          PULUMI_BACKEND_URL: '${{ env.PULUMI_BACKEND_URL }}'

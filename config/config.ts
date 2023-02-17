@@ -33,11 +33,17 @@ export default (): BaseCloudfrontArgs => {
   return <BaseCloudfrontArgs>{
     environment,
     projectName: serviceName,
-    dirPath: '../dist' || process.env.APP_DIR_PATH,
-    indexDocument: '/index.html' || process.env.APP_INDEX_DOCUMENT,
-    errorDocument: '/error.html' || process.env.APP_ERROR_DOCUMENT,
+    dirPath: process.env.APP_DIR_PATH || '../dist',
+    indexDocument: process.env.APP_INDEX_DOCUMENT || 'index.html',
+    errorDocument: process.env.APP_ERROR_DOCUMENT || 'error.html',
     debug: process.env.PULUMI_DEBUG === 'true',
     domainUrl,
+    ssl: {
+      enabled: process.env.SSL_ENABLED === 'true',
+      certificateArn:
+        process.env.SSL_CERTIFICATE_ARN ||
+        'arn:aws:iam::187416307283:server-certificate/test_cert_rab3wuqwgja25ct3n4jdj2tzu4',
+    },
     cloudflare: {
       zoneId: process.env.CLOUDFLARE_ZONE_ID || 'zone-id',
       record: {
