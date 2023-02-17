@@ -1,0 +1,106 @@
+name:  Continuous Deployment
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: 'Environment'
+        required: true
+        type: string
+    secrets:
+      AWS_BASTION_HOST:
+        required: true
+      SSH_KEY_FOR_BASTION_HOST:
+        required: true
+      SSH_KEY_FOR_SUBMODULE:
+        required: true
+      VAULT_ADDR:
+        required: true
+      VAULT_ROLE_ID:
+        required: true
+      VAULT_SECRET_ID:
+        required: true
+      VAULT_SECRET_PULUMI:
+        required: true
+      VAULT_SECRET_APP:
+        required: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      PULUMI_STACK: ${{ inputs.environment }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Checkout Pulumi repository
+        run: |
+          mkdir $HOME/.ssh
+          echo "${{ secrets.SSH_KEY_FOR_SUBMODULE }}" > $HOME/.ssh/id_rsa
+          chmod 600 $HOME/.ssh/id_rsa
+          git clone git@github.com:Hackmetrix-LLC/pulumi-aws-cloudfront.git ./pulumi-cloudfront
+      - name: Connect to Bastion Host for Vault
+        run: |
+          cd $HOME/.ssh
+          ssh-keyscan -H ${{ secrets.AWS_BASTION_HOST }} >> ~/.ssh/known_hosts
+          sudo echo "127.0.0.1 ${{ secrets.VAULT_ADDR }}" | sudo tee -a /etc/hosts
+          eval `ssh-agent -s`
+          ssh-add - <<< "${{ secrets.SSH_KEY_FOR_BASTION_HOST }}"
+          ssh -L 8443:${{ secrets.VAULT_ADDR }}:443 -Nf ec2-user@${{ secrets.AWS_BASTION_HOST }}
+      - name: Install Vault
+        run: |
+          wget -O- https://apt.releases.hashicorp.com/gpg | gpg --dearmor | sudo tee /usr/share/keyrings/hashicorp-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+          sudo apt update && sudo apt install vault
+      - name: Get App Values from Vault
+        run: |
+          # Get token for vault
+          VAULT_TOKEN=$(vault write auth/approle/login role_id="${{ secrets.VAULT_ROLE_ID }}" secret_id="${{ secrets.VAULT_SECRET_ID }}" -format=json |  python -c "import json,sys;obj=json.load(sys.stdin);print(obj['auth']['client_token']);") 
+          vault login -no-print token=$VAULT_TOKEN
+          # Get envs of secrets of pulumi
+          VAULT_DATA_JSON=$(vault kv get -format=json ${{ secrets.VAULT_SECRET_PULUMI }} | python -c "import json,sys;obj=json.load(sys.stdin);print(obj['data']['data']);" | sed "s/'/\"/g" | jq .)
+          # Inject envs to github action
+          echo $VAULT_DATA_JSON | jq -r 'to_entries|map("\(.key)=\(.value|tostring)")|.[]' >> $GITHUB_ENV
+          # Export values to file
+          echo $VAULT_DATA_JSON | jq -r 'to_entries|map("\(.value|tostring)")|.[]' >> .envs_values
+          # Get envs of secrets of app
+          VAULT_DATA_JSON=$(vault kv get -format=json ${{ secrets.VAULT_SECRET_APP }} | python -c "import json,sys;obj=json.load(sys.stdin);print(obj['data']['data']);" | sed "s/'/\"/g" | jq .)
+          echo APP_ENVARS=$VAULT_DATA_JSON >> $GITHUB_ENV
+        env:
+          VAULT_ADDR: https://${{ secrets.VAULT_ADDR }}:8443
+      - name: Install App dependencies
+        run: yarn install
+      - name: Build App
+        run: yarn build
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Config Pulumi Stack
+        working-directory: ./pulumi-cloudfront
+        run: |
+          pulumi stack select ${{ env.PULUMI_STACK }} --create
+          pulumi config set aws:region ${{ env.AWS_REGION }}
+        env:
+          PULUMI_CONFIG_PASSPHRASE: ${{ env.PULUMI_CONFIG_PASSPHRASE }}
+          PULUMI_BACKEND_URL: '${{ env.PULUMI_BACKEND_URL }}'
+      - name: Deploy Infrastructure
+        working-directory: ./pulumi-cloudfront
+        run: |
+          pulumi cancel -y --non-interactive
+          pulumi up -y --non-interactive --skip-preview
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          PULUMI_CONFIG_PASSPHRASE: ${{ env.PULUMI_CONFIG_PASSPHRASE }}
+          PULUMI_BACKEND_URL: '${{ env.PULUMI_BACKEND_URL }}'
+          APP_NAME: rbac
+          APP_DIR_PATH: '../dist'
+          APP_INDEX_DOCUMENT: index.html
+          APP_ERROR_DOCUMENT: error.html
+          APP_DOMAIN_URL: hackmetrix.com
+          APP_SUBDOMAIN_NAME: auth
+          PULUMI_DEBUG: 'true'
+

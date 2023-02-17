@@ -1,0 +1,33 @@
+{
+    "name": "pulumi-cloudfront-common",
+    "main": "index.ts",
+    "devDependencies": {
+        "@types/node": "^14",
+        "prettier": "^2.7.1"
+    },
+    "dependencies": {
+        "@pulumi/aws": "^5.0.0",
+        "@pulumi/awsx": "^0.40.0",
+        "@pulumi/cloudflare": "^4.12.1",
+        "@pulumi/pulumi": "^3.0.0",
+        "@pulumi/random": "^4.11.2",
+        "@pulumi/synced-folder": "^0.10.1"
+    },
+    "prettier": {
+        "arrowParens": "always",
+        "bracketSpacing": true,
+        "htmlWhitespaceSensitivity": "css",
+        "insertPragma": false,
+        "jsxBracketSameLine": false,
+        "jsxSingleQuote": false,
+        "printWidth": 100,
+        "proseWrap": "preserve",
+        "quoteProps": "as-needed",
+        "requirePragma": false,
+        "semi": true,
+        "singleQuote": true,
+        "tabWidth": 2,
+        "trailingComma": "all",
+        "useTabs": false
+    }
+}
