@@ -7,22 +7,20 @@ const shortEnvironments = {
   staging: 'stg',
   testing: 'tst',
   qa: 'qa',
-  master: 'prd',
-  main: 'prd',
   production: 'prd',
   management: 'mgt',
 };
 export default (): BaseCloudfrontArgs => {
-  const environment: string = process.env.ENVIRONMENT || 'development';
+  let environment: string = process.env.ENVIRONMENT || 'development';
+  environment = ['main', 'master'].includes(environment) ? 'production' : environment;
   // @ts-ignore
   const env: string = shortEnvironments[environment];
   let serviceName = null;
   let subDomainName = null;
 
   if (process.env.APP_NAME) {
-    serviceName = ['main', 'master', 'production'].includes(environment)
-      ? process.env.APP_NAME
-      : `${process.env.APP_NAME}-${env}`;
+    serviceName =
+      environment === 'production' ? process.env.APP_NAME : `${process.env.APP_NAME}-${env}`;
   }
 
   subDomainName = process.env.APP_SUBDOMAIN_NAME;

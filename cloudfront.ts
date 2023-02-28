@@ -14,6 +14,7 @@ export class BaseCloudfront {
         dirPath: './dist',
         indexDocument: 'index.html',
         errorDocument: 'error.html',
+        environment: 'development',
         ssl: {
           enabled: false,
         },
@@ -38,6 +39,7 @@ export class BaseCloudfront {
       dirPath,
       indexDocument,
       errorDocument,
+      environment,
       domainUrl,
       cloudflare: cf,
       ssl,
@@ -99,6 +101,86 @@ export class BaseCloudfront {
       acl: 'public-read',
     });
 
+    const currentPartition = await aws.getPartition({});
+    const currentAccount = await aws.getCallerIdentity({});
+    const region = await aws.getRegion({});
+
+    const originResponseLogGroup = new aws.cloudwatch.LogGroup('origin-response-log-group', {
+      name: `/aws/lambda/${projectName}-originResponse`,
+      tags: {
+        Application: projectName,
+        Environment: environment,
+      },
+    });
+
+    // Iam Role Lambda Function
+    const iamRoleLambdaExecution = new aws.iam.Role('iamRoleLambdaExecution', {
+      name: `${projectName}-${region.name}-lambdaRole`,
+      path: '/',
+      assumeRolePolicy: JSON.stringify({
+        Version: '2012-10-17',
+        Statement: [
+          {
+            Action: 'sts:AssumeRole',
+            Effect: 'Allow',
+            Sid: '',
+            Principal: {
+              Service: ['lambda.amazonaws.com', 'edgelambda.amazonaws.com'],
+            },
+          },
+        ],
+      }),
+    });
+
+    const policyLambdaExecution = new aws.iam.Policy('policyLambdaExecution', {
+      name: `${projectName}-lambda`,
+      policy: JSON.stringify({
+        Version: '2012-10-17',
+        Statement: [
+          {
+            Action: ['logs:CreateLogStream', 'logs:CreateLogGroup'],
+            Effect: 'Allow',
+            Resource: `arn:${currentPartition.partition}:logs:${region.name}:${currentAccount.accountId}:log-group:/aws/lambda/${projectName}*:*`,
+          },
+          {
+            Action: ['logs:PutLogEvents'],
+            Effect: 'Allow',
+            Resource: `arn:${currentPartition.partition}:logs:${region.name}:${currentAccount.accountId}:log-group:/aws/lambda/${projectName}*:*:*`,
+          },
+          {
+            Action: ['logs:CreateLogGroup', 'logs:CreateLogStream', 'logs:PutLogEvents'],
+            Effect: 'Allow',
+            Resource: `arn:${currentPartition.partition}:logs:*:*:*`,
+          },
+        ],
+      }),
+    });
+
+    const attachPolicy = new aws.iam.PolicyAttachment('attach-policy', {
+      roles: [iamRoleLambdaExecution.name],
+      policyArn: policyLambdaExecution.arn,
+    });
+
+    // Lambda Origin Response
+    const originResponseLambda = new aws.lambda.Function(
+      'origin-response',
+      {
+        code: new pulumi.asset.AssetArchive({
+          '.': new pulumi.asset.FileArchive('./handler'),
+        }),
+        name: `${projectName}-originResponse`,
+        handler: 'originResponse.js',
+        runtime: 'nodejs14.x',
+        memorySize: 128,
+        timeout: 5,
+        publish: true,
+        role: iamRoleLambdaExecution.arn,
+      },
+      {
+        dependsOn: originResponseLogGroup,
+      },
+    );
+
     // Create a CloudFront CDN to distribute and cache the website.
     const cdn = new aws.cloudfront.Distribution('cdn', {
       enabled: true,
@@ -128,6 +210,12 @@ export class BaseCloudfront {
             forward: 'all',
           },
         },
+        lambdaFunctionAssociations: [
+          {
+            eventType: 'origin-response',
+            lambdaArn: originResponseLambda.qualifiedArn,
+          },
+        ],
       },
       priceClass: 'PriceClass_All',
       customErrorResponses: [
@@ -150,6 +238,16 @@ export class BaseCloudfront {
       },
       httpVersion: 'http2',
     });
+
+    const originResponseLambdaFunctionInvokePermission = new aws.lambda.Permission(
+      'origin-response-lambda-function-invoke-permission',
+      {
+        function: originResponseLambda.name,
+        action: 'lambda:InvokeFunction',
+        principal: 'edgelambda.amazonaws.com',
+        sourceArn: cdn.arn,
+      },
+    );
 
     if (cf.record.enabled || cf.acl.enabled) {
       const cfProvider = new cloudflare.Provider('cloudflare', {
@@ -207,6 +305,7 @@ export interface BaseCloudfrontArgs {
   dirPath: string;
   indexDocument: string;
   errorDocument: string;
+  environment: string;
   domainUrl: string;
   debug: boolean;
   ssl: {
