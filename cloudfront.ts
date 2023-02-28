@@ -123,7 +123,6 @@ export class BaseCloudfront {
           {
             Action: 'sts:AssumeRole',
             Effect: 'Allow',
-            Sid: '',
             Principal: {
               Service: ['lambda.amazonaws.com', 'edgelambda.amazonaws.com'],
             },
@@ -240,7 +239,7 @@ export class BaseCloudfront {
     });
 
     const originResponseLambdaFunctionInvokePermission = new aws.lambda.Permission(
-      'origin-response-lambda-function-invoke-permission',
+      'origin-response-permission',
       {
         function: originResponseLambda.name,
         action: 'lambda:InvokeFunction',
