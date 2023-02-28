@@ -7,6 +7,10 @@ on:
         description: 'Environment'
         required: true
         type: string
+      build_command:
+        description: 'Build command'
+        required: true
+        type: string
     secrets:
       AWS_BASTION_HOST:
         required: true
@@ -92,7 +96,7 @@ jobs:
       - name: Install App dependencies
         run: yarn install
       - name: Build App
-        run: yarn build
+        run: ${{ inputs.build_command }}
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v1
         with:
