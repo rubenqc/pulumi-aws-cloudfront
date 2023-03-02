@@ -55,50 +55,39 @@ export class BaseCloudfront {
     const bucket = new aws.s3.Bucket('bucket', {
       // @ts-ignore
       bucket: bucketName,
-      acl: 'public-read',
+      acl: 'private',
+      versioning: {
+        enabled: true,
+      },
+      serverSideEncryptionConfiguration: {
+        rule: {
+          applyServerSideEncryptionByDefault: {
+            sseAlgorithm: 'AES256',
+          },
+        },
+      },
       website: {
         indexDocument: indexDocument,
+        errorDocument: indexDocument,
       },
     });
 
-    // Generate Origin Access Identity to access the private s3 bucket.
-    const originAccessIdentity = new aws.cloudfront.OriginAccessIdentity('originAccessIdentity', {
-      comment: 'this is needed to setup s3 polices and make s3 not public.',
-    });
-
-    const bucketPolicy = new aws.s3.BucketPolicy('bucketPolicy', {
-      bucket: bucket.id,
-      policy: pulumi.jsonStringify({
-        Version: '2008-10-17',
-        Statement: [
-          {
-            Effect: 'Allow',
-            Principal: {
-              AWS: originAccessIdentity.iamArn,
-            }, // Only allow Cloudfront read access.
-            Action: ['s3:GetObject'],
-            Resource: [pulumi.interpolate`${bucket.arn}/*`], // Give Cloudfront access to the entire bucket.
-          },
-          // {
-          //   Effect: 'Deny',
-          //   Principal: '*',
-          //   Action: ['s3:*'],
-          //   Resource: [pulumi.interpolate`${bucket.arn}`, pulumi.interpolate`${bucket.arn}/*`],
-          //   Condition: {
-          //     Bool: {
-          //       'aws:SecureTransport': 'false',
-          //     },
-          //   },
-          // },
-        ],
-      }),
-    });
+    const bucketPublicAccessBlock = new aws.s3.BucketPublicAccessBlock(
+      's3BucketPublicAccessPolicy',
+      {
+        bucket: bucket.id,
+        blockPublicAcls: true,
+        blockPublicPolicy: true,
+        ignorePublicAcls: true,
+        restrictPublicBuckets: true,
+      },
+    );
 
     // Use a synced folder to manage the files of the website.
     const bucketFolder = new synced_folder.S3BucketFolder('bucket-folder', {
       path: dirPath,
       bucketName: bucket.bucket,
-      acl: 'public-read',
+      acl: 'private',
     });
 
     const currentPartition = await aws.getPartition({});
@@ -180,19 +169,22 @@ export class BaseCloudfront {
       },
     );
 
+    const originAccessControl = new aws.cloudfront.OriginAccessControl('example', {
+      name: `access-control-${projectName}`,
+      description: 'Cloudfront access control',
+      originAccessControlOriginType: 's3',
+      signingBehavior: 'always',
+      signingProtocol: 'sigv4',
+    });
+
     // Create a CloudFront CDN to distribute and cache the website.
     const cdn = new aws.cloudfront.Distribution('cdn', {
       enabled: true,
       origins: [
         {
-          originId: bucket.arn,
           domainName: bucket.websiteEndpoint,
-          customOriginConfig: {
-            originProtocolPolicy: 'http-only',
-            httpPort: 80,
-            httpsPort: 443,
-            originSslProtocols: ['TLSv1.2'],
-          },
+          originId: bucket.arn,
+          originAccessControlId: originAccessControl.id,
         },
       ],
       defaultCacheBehavior: {
@@ -238,15 +230,57 @@ export class BaseCloudfront {
       httpVersion: 'http2',
     });
 
-    const originResponseLambdaFunctionInvokePermission = new aws.lambda.Permission(
-      'origin-response-permission',
-      {
-        function: originResponseLambda.name,
-        action: 'lambda:InvokeFunction',
-        principal: 'edgelambda.amazonaws.com',
-        sourceArn: cdn.arn,
-      },
-    );
+    const bucketPolicy = new aws.s3.BucketPolicy('bucketPolicy', {
+      bucket: bucket.id,
+      policy: pulumi.jsonStringify({
+        Version: '2008-10-17',
+        Id: 'BUCKET-POLICY',
+        Statement: [
+          {
+            Sid: 'AllowSSLRequestsOnly',
+            Effect: 'Deny',
+            Principal: '*',
+            Action: ['s3:*'],
+            Resource: [pulumi.interpolate`${bucket.arn}/*`, pulumi.interpolate`${bucket.arn}`],
+            Condition: {
+              Bool: {
+                'aws:SecureTransport': 'false',
+              },
+            },
+          },
+          {
+            Sid: '1',
+            Effect: 'Allow',
+            Principal: {
+              Service: 'cloudfront.amazonaws.com',
+            },
+            Action: 's3:GetObject',
+            Resource: [pulumi.interpolate`${bucket.arn}/*`, pulumi.interpolate`${bucket.arn}`],
+            Condition: {
+              StringEquals: {
+                'AWS:SourceArn': cdn.arn,
+              },
+            },
+          },
+          {
+            Sid: '2',
+            Effect: 'Allow',
+            Principal: {
+              AWS: [currentAccount.arn],
+            },
+            Action: [
+              's3:GetObject',
+              's3:DeleteObject',
+              's3:PutObject',
+              's3:PutBucketWebsite',
+              's3:GetBucketWebsite',
+              's3:DeleteBucketWebsite',
+            ],
+            Resource: [pulumi.interpolate`${bucket.arn}/*`, pulumi.interpolate`${bucket.arn}`],
+          },
+        ],
+      }),
+    });
 
     if (cf.record.enabled || cf.acl.enabled) {
       const cfProvider = new cloudflare.Provider('cloudflare', {
