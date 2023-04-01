@@ -112,6 +112,13 @@ jobs:
         env:
           PULUMI_CONFIG_PASSPHRASE: ${{ env.PULUMI_CONFIG_PASSPHRASE }}
           PULUMI_BACKEND_URL: '${{ env.PULUMI_BACKEND_URL }}'
+      - name: Refresh Pulumi
+        working-directory: ./pulumi-cloudfront
+        if: ${{ env.PULUMI_REFRESH_ENABLED == 'true' }}
+        run: pulumi refresh -y --non-interactive
+        env:
+          PULUMI_CONFIG_PASSPHRASE: ${{ env.PULUMI_CONFIG_PASSPHRASE }}
+          PULUMI_BACKEND_URL: '${{ env.PULUMI_BACKEND_URL }}'
       - name: Deploy Infrastructure
         working-directory: ./pulumi-cloudfront
         run: |
