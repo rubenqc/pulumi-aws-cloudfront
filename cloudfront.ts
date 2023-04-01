@@ -50,33 +50,131 @@ export class BaseCloudfront {
     });
 
     // Create an S3 bucket for logs
-    const logBucket = new aws.s3.Bucket('logBucket', {
+    const bucketLog = new aws.s3.Bucket('logBucket', {
       bucket: pulumi.interpolate`${bucketName.id}-log`,
       acl: 'log-delivery-write',
-    });
-
-    // Create an S3 bucket and configure it as a website.
-    const currentUser = await aws.s3.getCanonicalUserId({});
-    const bucket = new aws.s3.Bucket('bucket', {
-      // @ts-ignore
-      bucket: bucketName,
-      // acl: 'private',
-      website: {
-        indexDocument: indexDocument,
+      serverSideEncryptionConfiguration: {
+        rule: {
+          applyServerSideEncryptionByDefault: {
+            sseAlgorithm: 'AES256',
+          },
+        },
       },
       loggings: [
         {
-          targetBucket: logBucket.id,
+          targetBucket: pulumi.interpolate`${bucketName.id}-log`,
+          targetPrefix: '/log',
+        },
+      ],
+    });
+
+    const bucketLogPublicAccessBlock = new aws.s3.BucketPublicAccessBlock('bucketLogPolicy', {
+      bucket: bucketLog.id,
+
+      blockPublicAcls: true,
+      blockPublicPolicy: true,
+      restrictPublicBuckets: true,
+      ignorePublicAcls: true,
+    });
+
+    const bucketLogPolicy = new aws.s3.BucketPolicy('bucketLogPolicy', {
+      bucket: bucketLog.id,
+      policy: pulumi.jsonStringify({
+        Version: '2012-10-17',
+        Id: 'BUCKET-POLICY',
+        Statement: [
+          {
+            Sid: 'AllowSSLRequestsOnly',
+            Effect: 'Deny',
+            Principal: '*',
+            Action: 's3:*',
+            Resource: [
+              pulumi.interpolate`${bucketLog.arn}/*`,
+              pulumi.interpolate`${bucketLog.arn}`,
+            ],
+            Condition: {
+              Bool: {
+                'aws:SecureTransport': 'false',
+              },
+            },
+          },
+        ],
+      }),
+    });
+
+    const bucketLogLifecycleConfig = new aws.s3.BucketLifecycleConfigurationV2(
+      'bucketLogLifecycle',
+      {
+        bucket: bucketLog.id,
+        rules: [
+          {
+            id: 'glacier',
+            status: 'Enabled',
+
+            transitions: [
+              {
+                days: 60,
+                storageClass: 'glacier',
+              },
+            ],
+          },
+        ],
+      },
+    );
+
+    // Create an S3 bucket and configure it as a website.
+    const bucket = new aws.s3.Bucket('bucket', {
+      // @ts-ignore
+      bucket: bucketName,
+      acl: 'private',
+      versioning: {
+        enabled: true,
+      },
+      lifecycleRules: [
+        {
+          prefix: 'config/',
+          enabled: true,
+          noncurrentVersionTransitions: [
+            {
+              days: 30,
+              storageClass: 'STANDARD_IA',
+            },
+            {
+              days: 60,
+              storageClass: 'GLACIER',
+            },
+          ],
+          noncurrentVersionExpiration: {
+            days: 90,
+          },
+        },
+      ],
+      serverSideEncryptionConfiguration: {
+        rule: {
+          applyServerSideEncryptionByDefault: {
+            sseAlgorithm: 'AES256',
+          },
+        },
+      },
+      website: {
+        indexDocument: indexDocument,
+        errorDocument: errorDocument,
+      },
+      loggings: [
+        {
+          targetBucket: bucketLog.id,
           targetPrefix: 'log/',
         },
       ],
-      grants: [
-        {
-          id: currentUser.id,
-          type: 'CanonicalUser',
-          permissions: ['FULL_CONTROL'],
-        },
-      ],
+    });
+
+    const bucketPublicAccessBlock = new aws.s3.BucketPublicAccessBlock('bucketPolicy', {
+      bucket: bucket.id,
+
+      blockPublicAcls: true,
+      blockPublicPolicy: true,
+      restrictPublicBuckets: true,
+      ignorePublicAcls: true,
     });
 
     // Create a CloudFront CDN to distribute and cache the website.
@@ -134,7 +232,8 @@ export class BaseCloudfront {
     const bucketPolicy = new aws.s3.BucketPolicy('bucketPolicy', {
       bucket: bucket.id,
       policy: pulumi.jsonStringify({
-        Version: '2008-10-17',
+        Version: '2012-10-17',
+        Id: 'BUCKET-POLICY',
         Statement: [
           {
             Sid: 'AllowSSLRequestsOnly',
