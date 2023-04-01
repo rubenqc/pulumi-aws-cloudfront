@@ -114,7 +114,7 @@ export class BaseCloudfront {
             transitions: [
               {
                 days: 60,
-                storageClass: 'glacier',
+                storageClass: 'GLACIER',
               },
             ],
           },
