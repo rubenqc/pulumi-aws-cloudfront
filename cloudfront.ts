@@ -179,6 +179,29 @@ export class BaseCloudfront {
       ignorePublicAcls: true,
     });
 
+    const cloudfrontCachePolicy = new aws.cloudfront.CachePolicy('cloudfrontCachePolicy', {
+      name: `${projectName}-cache-policy`,
+      defaultTtl: 86400,
+      maxTtl: 31536000,
+      minTtl: 1,
+      parametersInCacheKeyAndForwardedToOrigin: {
+        cookiesConfig: {
+          cookieBehavior: 'none',
+        },
+        headersConfig: {
+          headerBehavior: 'none',
+          // headers: {
+          //   items: ['Authorization'],
+          // },
+        },
+        queryStringsConfig: {
+          queryStringBehavior: 'none',
+        },
+        enableAcceptEncodingGzip: true,
+        enableAcceptEncodingBrotli: true,
+      },
+    });
+
     const cloudfrontOriginAccessControl = new aws.cloudfront.OriginAccessControl(
       'originAccessControl',
       {
@@ -190,7 +213,7 @@ export class BaseCloudfront {
       },
     );
 
-    const cloudfrontPolicy = new aws.cloudfront.OriginRequestPolicy('cdn', {
+    const cloudfrontOriginRequestPolicy = new aws.cloudfront.OriginRequestPolicy('cdn', {
       name: `${projectName}-CORS-S3Origin`,
       cookiesConfig: {
         cookieBehavior: 'none',
@@ -205,15 +228,28 @@ export class BaseCloudfront {
             'Origin',
             'Access-Control-Request-Headers',
             'Access-Control-Request-Method',
-            'x-prerender-path',
-            'x-is-sitemap',
-            'x-is-robots',
-            'Referer',
-            'Host',
+            // 'x-prerender-path',
+            // 'x-is-sitemap',
+            // 'x-is-robots',
+            // 'Referer',
+            // 'Host',
           ],
         },
       },
     });
+
+    const cloudfrontResponseHeaderPolicy = new aws.cloudfront.ResponseHeadersPolicy(
+      'cloudfrontResponseHeaders',
+      {
+        name: `${projectName}-cdn-response-headers-policy`,
+        securityHeadersConfig: {
+          frameOptions: {
+            frameOption: 'SAMEORIGIN',
+            override: true,
+          },
+        },
+      },
+    );
 
     // Create a CloudFront CDN to distribute and cache the website.
     const cdn = new aws.cloudfront.Distribution('cdn', {
@@ -226,25 +262,23 @@ export class BaseCloudfront {
         },
       ],
       defaultCacheBehavior: {
-        targetOriginId: bucket.id,
-        viewerProtocolPolicy: 'redirect-to-https',
         allowedMethods: ['GET', 'HEAD', 'OPTIONS'],
         cachedMethods: ['GET', 'HEAD', 'OPTIONS'],
-        defaultTtl: 600,
-        maxTtl: 600,
-        minTtl: 600,
-        forwardedValues: {
-          queryString: true,
-          cookies: {
-            forward: 'all',
-          },
-        },
+        targetOriginId: bucket.id,
+
+        viewerProtocolPolicy: 'redirect-to-https',
+        compress: true,
+
+        originRequestPolicyId: cloudfrontOriginRequestPolicy.id,
+        cachePolicyId: cloudfrontCachePolicy.id,
+
+        responseHeadersPolicyId: cloudfrontResponseHeaderPolicy.id,
       },
-      priceClass: 'PriceClass_All',
       customErrorResponses: [
         {
+          errorCachingMinTtl: 0,
           errorCode: 404,
-          responseCode: 404,
+          responseCode: 200,
           responsePagePath: `/${errorDocument}`,
         },
       ],
@@ -254,12 +288,12 @@ export class BaseCloudfront {
         },
       },
       aliases: [domainUrl],
+      defaultRootObject: indexDocument,
       viewerCertificate: {
         sslSupportMethod: 'sni-only',
         acmCertificateArn: ssl.enabled ? ssl.certificateArn : undefined,
         minimumProtocolVersion: 'TLSv1.2_2021',
       },
-      httpVersion: 'http2',
     });
 
     const bucketPolicy = new aws.s3.BucketPolicy('bucketPolicy', {
