@@ -86,7 +86,7 @@ jobs:
       - name: Update Pulumi version
         uses: pulumi/setup-pulumi@v2
         with:
-          pulumi-version: 3.46.1
+          pulumi-version: 3.60.1
       - name: Config Pulumi Stack
         working-directory: ./pulumi-cloudfront
         run: |
