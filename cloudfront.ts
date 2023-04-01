@@ -51,15 +51,16 @@ export class BaseCloudfront {
 
     // Create an S3 bucket for logs
     const logBucket = new aws.s3.Bucket('logBucket', {
-      bucket: `${bucketName}-log`,
+      bucket: pulumi.interpolate`${bucketName.id}-log`,
       acl: 'log-delivery-write',
     });
 
     // Create an S3 bucket and configure it as a website.
+    const currentUser = await aws.s3.getCanonicalUserId({});
     const bucket = new aws.s3.Bucket('bucket', {
       // @ts-ignore
       bucket: bucketName,
-      acl: 'private',
+      // acl: 'private',
       website: {
         indexDocument: indexDocument,
       },
@@ -67,6 +68,13 @@ export class BaseCloudfront {
         {
           targetBucket: logBucket.id,
           targetPrefix: 'log/',
+        },
+      ],
+      grants: [
+        {
+          id: currentUser.id,
+          type: 'CanonicalUser',
+          permissions: ['FULL_CONTROL'],
         },
       ],
     });
