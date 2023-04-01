@@ -179,23 +179,54 @@ export class BaseCloudfront {
       ignorePublicAcls: true,
     });
 
+    const cloudfrontOriginAccessControl = new aws.cloudfront.OriginAccessControl(
+      'originAccessControl',
+      {
+        name: `access-control-${projectName}`,
+        description: 'Cloudfront access control',
+        originAccessControlOriginType: 's3',
+        signingBehavior: 'always',
+        signingProtocol: 'sigv4',
+      },
+    );
+
+    const cloudfrontPolicy = new aws.cloudfront.OriginRequestPolicy('cdn', {
+      name: `${projectName}-CORS-S3Origin`,
+      cookiesConfig: {
+        cookieBehavior: 'none',
+      },
+      queryStringsConfig: {
+        queryStringBehavior: 'none',
+      },
+      headersConfig: {
+        headerBehavior: 'whitelist',
+        headers: {
+          items: [
+            'Origin',
+            'Access-Control-Request-Headers',
+            'Access-Control-Request-Method',
+            'x-prerender-path',
+            'x-is-sitemap',
+            'x-is-robots',
+            'Referer',
+            'Host',
+          ],
+        },
+      },
+    });
+
     // Create a CloudFront CDN to distribute and cache the website.
     const cdn = new aws.cloudfront.Distribution('cdn', {
       enabled: true,
       origins: [
         {
-          originId: bucket.arn,
-          domainName: bucket.websiteEndpoint,
-          customOriginConfig: {
-            originProtocolPolicy: 'http-only',
-            httpPort: 80,
-            httpsPort: 443,
-            originSslProtocols: ['TLSv1.2'],
-          },
+          originId: bucket.id,
+          domainName: pulumi.interpolate`${bucketName.id}.s3.amazonaws.com`,
+          originAccessControlId: cloudfrontOriginAccessControl.id,
         },
       ],
       defaultCacheBehavior: {
-        targetOriginId: bucket.arn,
+        targetOriginId: bucket.id,
         viewerProtocolPolicy: 'redirect-to-https',
         allowedMethods: ['GET', 'HEAD', 'OPTIONS'],
         cachedMethods: ['GET', 'HEAD', 'OPTIONS'],
