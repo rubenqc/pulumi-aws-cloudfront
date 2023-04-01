@@ -43,6 +43,8 @@ export class BaseCloudfront {
       ssl,
     } = this.args;
 
+    const current = await aws.getCallerIdentity({});
+
     const bucketName = new random.RandomPet('random', {
       prefix: projectName,
       separator: '-',
@@ -260,6 +262,22 @@ export class BaseCloudfront {
                 'AWS:SourceArn': cdn.arn,
               },
             },
+          },
+          {
+            Sid: '2',
+            Effect: 'Allow',
+            Principal: {
+              AWS: [current.arn],
+            },
+            Action: [
+              's3:GetObject',
+              's3:DeleteObject',
+              's3:PutObject',
+              's3:PutBucketWebsite',
+              's3:GetBucketWebsite',
+              's3:DeleteBucketWebsite',
+            ],
+            Resource: [pulumi.interpolate`${bucket.arn}/*`, pulumi.interpolate`${bucket.arn}`],
           },
         ],
       }),
