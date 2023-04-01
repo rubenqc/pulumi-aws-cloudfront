@@ -49,54 +49,26 @@ export class BaseCloudfront {
       length: 1,
     });
 
+    // Create an S3 bucket for logs
+    const logBucket = new aws.s3.Bucket('logBucket', {
+      bucket: `${bucketName}-log`,
+      acl: 'log-delivery-write',
+    });
+
     // Create an S3 bucket and configure it as a website.
     const bucket = new aws.s3.Bucket('bucket', {
       // @ts-ignore
       bucket: bucketName,
-      acl: 'public-read',
+      acl: 'private',
       website: {
         indexDocument: indexDocument,
       },
-    });
-
-    // Generate Origin Access Identity to access the private s3 bucket.
-    const originAccessIdentity = new aws.cloudfront.OriginAccessIdentity('originAccessIdentity', {
-      comment: 'this is needed to setup s3 polices and make s3 not public.',
-    });
-
-    const bucketPolicy = new aws.s3.BucketPolicy('bucketPolicy', {
-      bucket: bucket.id,
-      policy: pulumi.jsonStringify({
-        Version: '2008-10-17',
-        Statement: [
-          {
-            Effect: 'Allow',
-            Principal: {
-              AWS: originAccessIdentity.iamArn,
-            }, // Only allow Cloudfront read access.
-            Action: ['s3:GetObject'],
-            Resource: [pulumi.interpolate`${bucket.arn}/*`], // Give Cloudfront access to the entire bucket.
-          },
-          // {
-          //   Effect: 'Deny',
-          //   Principal: '*',
-          //   Action: ['s3:*'],
-          //   Resource: [pulumi.interpolate`${bucket.arn}`, pulumi.interpolate`${bucket.arn}/*`],
-          //   Condition: {
-          //     Bool: {
-          //       'aws:SecureTransport': 'false',
-          //     },
-          //   },
-          // },
-        ],
-      }),
-    });
-
-    // Use a synced folder to manage the files of the website.
-    const bucketFolder = new synced_folder.S3BucketFolder('bucket-folder', {
-      path: dirPath,
-      bucketName: bucket.bucket,
-      acl: 'public-read',
+      loggings: [
+        {
+          targetBucket: logBucket.id,
+          targetPrefix: 'log/',
+        },
+      ],
     });
 
     // Create a CloudFront CDN to distribute and cache the website.
@@ -149,6 +121,48 @@ export class BaseCloudfront {
         minimumProtocolVersion: 'TLSv1.2_2021',
       },
       httpVersion: 'http2',
+    });
+
+    const bucketPolicy = new aws.s3.BucketPolicy('bucketPolicy', {
+      bucket: bucket.id,
+      policy: pulumi.jsonStringify({
+        Version: '2008-10-17',
+        Statement: [
+          {
+            Sid: 'AllowSSLRequestsOnly',
+            Effect: 'Deny',
+            Principal: '*',
+            Action: 's3:*',
+            Resource: [pulumi.interpolate`${bucket.arn}/*`, pulumi.interpolate`${bucket.arn}`],
+            Condition: {
+              Bool: {
+                'aws:SecureTransport': 'false',
+              },
+            },
+          },
+          {
+            Sid: '1',
+            Effect: 'Allow',
+            Principal: {
+              Service: 'cloudfront.amazonaws.com',
+            }, // Only allow Cloudfront read access.
+            Action: 's3:GetObject',
+            Resource: [pulumi.interpolate`${bucket.arn}/*`, pulumi.interpolate`${bucket.arn}`],
+            Condition: {
+              StringEquals: {
+                'AWS:SourceArn': cdn.arn,
+              },
+            },
+          },
+        ],
+      }),
+    });
+
+    // Use a synced folder to manage the files of the website.
+    const bucketFolder = new synced_folder.S3BucketFolder('bucket-folder', {
+      path: dirPath,
+      bucketName: bucket.bucket,
+      acl: 'public-read',
     });
 
     if (cf.record.enabled || cf.acl.enabled) {
