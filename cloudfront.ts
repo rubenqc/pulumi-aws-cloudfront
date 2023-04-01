@@ -284,11 +284,17 @@ export class BaseCloudfront {
     });
 
     // Use a synced folder to manage the files of the website.
-    const bucketFolder = new synced_folder.S3BucketFolder('bucket-folder', {
-      path: dirPath,
-      bucketName: bucket.bucket,
-      acl: 'public-read',
-    });
+    const bucketFolder = new synced_folder.S3BucketFolder(
+      'bucket-folder',
+      {
+        path: dirPath,
+        bucketName: bucket.bucket,
+        acl: 'private',
+      },
+      {
+        dependsOn: bucketPolicy,
+      },
+    );
 
     if (cf.record.enabled || cf.acl.enabled) {
       const cfProvider = new cloudflare.Provider('cloudflare', {
