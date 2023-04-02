@@ -248,6 +248,19 @@ export class BaseCloudfront {
             override: true,
           },
         },
+        corsConfig: {
+          accessControlAllowCredentials: false,
+          accessControlAllowHeaders: {
+            items: ['*'],
+          },
+          accessControlAllowMethods: {
+            items: ['GET'],
+          },
+          accessControlAllowOrigins: {
+            items: ['https://app-dev.hackmetrix.com'],
+          },
+          originOverride: true,
+        },
       },
     );
 
