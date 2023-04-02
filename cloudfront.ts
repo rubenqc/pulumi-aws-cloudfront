@@ -28,6 +28,11 @@ export class BaseCloudfront {
             rules: [],
           },
         },
+        responseHeaders: {
+          corsConfig: {
+            enabled: false,
+          },
+        },
       },
       args,
     );
@@ -38,9 +43,10 @@ export class BaseCloudfront {
       dirPath,
       indexDocument,
       errorDocument,
-      domainUrl,
+      domainUrls,
       cloudflare: cf,
       ssl,
+      responseHeaders,
     } = this.args;
 
     const current = await aws.getCallerIdentity({});
@@ -190,9 +196,6 @@ export class BaseCloudfront {
         },
         headersConfig: {
           headerBehavior: 'none',
-          // headers: {
-          //   items: ['Authorization'],
-          // },
         },
         queryStringsConfig: {
           queryStringBehavior: 'none',
@@ -248,19 +251,9 @@ export class BaseCloudfront {
             override: true,
           },
         },
-        corsConfig: {
-          accessControlAllowCredentials: false,
-          accessControlAllowHeaders: {
-            items: ['*'],
-          },
-          accessControlAllowMethods: {
-            items: ['GET'],
-          },
-          accessControlAllowOrigins: {
-            items: ['https://app-dev.hackmetrix.com'],
-          },
-          originOverride: true,
-        },
+        corsConfig: responseHeaders.corsConfig.enabled
+          ? responseHeaders.corsConfig.value
+          : undefined,
       },
     );
 
@@ -300,7 +293,7 @@ export class BaseCloudfront {
           restrictionType: 'none',
         },
       },
-      aliases: [domainUrl],
+      aliases: domainUrls,
       defaultRootObject: indexDocument,
       viewerCertificate: {
         sslSupportMethod: 'sni-only',
@@ -385,7 +378,7 @@ export class BaseCloudfront {
         const record = new cloudflare.Record(
           'cloudflare-record',
           {
-            name: domainUrl,
+            name: domainUrls[0], // create only the first domain
             zoneId: cf.zoneId,
             type: 'CNAME',
             value: cdn.domainName,
@@ -409,7 +402,7 @@ export class BaseCloudfront {
             })),
             description: `Restrict access to ${projectName} webapp`,
             paused: false,
-            urls: [`${domainUrl}/*`],
+            urls: domainUrls.map((domainUrl) => `${domainUrl}/*`),
             zoneId: cf.zoneId,
           },
           {
@@ -430,7 +423,7 @@ export interface BaseCloudfrontArgs {
   dirPath: string;
   indexDocument: string;
   errorDocument: string;
-  domainUrl: string;
+  domainUrls: string[];
   debug: boolean;
   ssl: {
     enabled: boolean;
@@ -448,6 +441,24 @@ export interface BaseCloudfrontArgs {
         name: string;
         value: string;
       }[];
+    };
+  };
+  responseHeaders: {
+    corsConfig: {
+      enabled: boolean;
+      value: {
+        accessControlAllowCredentials: boolean;
+        accessControlAllowHeaders: {
+          items: string[];
+        };
+        accessControlAllowMethods: {
+          items: string[];
+        };
+        accessControlAllowOrigins: {
+          items: string[];
+        };
+        originOverride: boolean;
+      };
     };
   };
 }
