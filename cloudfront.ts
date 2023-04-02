@@ -228,7 +228,7 @@ export class BaseCloudfront {
             'Origin',
             'Access-Control-Request-Headers',
             'Access-Control-Request-Method',
-            'Access-Control-Allow-Origin',
+            // 'x-prerender-path',
             // 'x-is-sitemap',
             // 'x-is-robots',
             // 'Referer',
