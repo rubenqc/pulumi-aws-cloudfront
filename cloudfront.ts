@@ -3,7 +3,7 @@ import * as random from '@pulumi/random';
 import * as cloudflare from '@pulumi/cloudflare';
 import * as aws from '@pulumi/aws';
 import * as synced_folder from '@pulumi/synced-folder';
-import * as domain from 'domain';
+import { local } from '@pulumi/command';
 
 export class BaseCloudfront {
   readonly args: BaseCloudfrontArgs;
@@ -411,6 +411,17 @@ export class BaseCloudfront {
         );
       }
     }
+
+    // create cache invalidation
+    const invalidationCommand = new local.Command(
+      `invalidate-${new Date().getTime()}`,
+      {
+        create: pulumi.interpolate`aws cloudfront create-invalidation --distribution-id ${cdn.id} --paths "/*"`,
+      },
+      {
+        dependsOn: bucketFolder,
+      },
+    );
 
     return {
       cdnDomainName: cdn.domainName,
