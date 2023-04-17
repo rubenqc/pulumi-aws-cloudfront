@@ -33,14 +33,18 @@ export default (): BaseCloudfrontArgs => {
     ? String(process.env.APP_SUBDOMAIN_NAMES).trim()
     : '';
 
-  domainUrls = subDomainNames
-    ? subDomainNames
-        .split(',')
-        .map(
-          (subDomainName) =>
-            `${subDomainName.trim()}.${process.env.APP_DOMAIN_URL || 'domain-url.com'}`,
-        )
-    : [`${serviceName}.${process.env.APP_DOMAIN_URL}` || 'domain-url.com'];
+  if (process.env.APP_SUBDOMAIN_ENABLED === 'true') {
+    domainUrls = subDomainNames
+      ? subDomainNames
+          .split(',')
+          .map(
+            (subDomainName) =>
+              `${subDomainName.trim()}.${process.env.APP_DOMAIN_URL || 'domain-url.com'}`,
+          )
+      : [`${serviceName}.${process.env.APP_DOMAIN_URL}` || 'domain-url.com'];
+  } else {
+    domainUrls = [process.env.APP_DOMAIN_URL || 'domain-url.com'];
+  }
 
   responseHeadersAccessControlAllowOrigins = process.env
     .AWS_RESPONSE_HEADERS_ACCESS_CONTROLL_ALLOW_ORIGINS

@@ -1,4 +1,4 @@
-name: Destroy Infrastructure - Pulumi
+name: Destroy Infrastructure - Pulumi - Vault
 
 on:
   workflow_call:

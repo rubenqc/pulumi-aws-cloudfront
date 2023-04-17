@@ -419,7 +419,7 @@ export class BaseCloudfront {
         create: pulumi.interpolate`aws cloudfront create-invalidation --distribution-id ${cdn.id} --paths "/*"`,
       },
       {
-        dependsOn: bucketFolder,
+        dependsOn: [bucketFolder, cdn],
       },
     );
 
