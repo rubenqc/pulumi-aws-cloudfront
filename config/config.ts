@@ -1,3 +1,5 @@
+import * as domain from 'domain';
+
 type Environment = 'development' | 'staging' | 'testing' | 'qa' | 'production' | 'master' | 'main';
 
 import { BaseCloudfront, BaseCloudfrontArgs } from '../cloudfront';
@@ -16,17 +18,36 @@ export default (): BaseCloudfrontArgs => {
   // @ts-ignore
   const env: string = shortEnvironments[environment];
   let serviceName = null;
-  let subDomainName = null;
+  let subDomainNames = null;
+  let domainUrls: string[] = [];
+  let responseHeadersAccessControlAllowOrigins: string;
 
   if (process.env.APP_NAME) {
     serviceName =
       environment === 'production' ? process.env.APP_NAME : `${process.env.APP_NAME}-${env}`;
   }
 
-  subDomainName = process.env.APP_SUBDOMAIN_NAME;
+  subDomainNames = process.env.APP_SUBDOMAIN_NAMES
+    ? String(process.env.APP_SUBDOMAIN_NAMES).trim()
+    : '';
 
-  const domainUrl =
-    `${subDomainName || serviceName}.${process.env.APP_DOMAIN_URL}` || 'domain-url.com';
+  if (process.env.APP_SUBDOMAIN_ENABLED === 'true') {
+    domainUrls = subDomainNames
+      ? subDomainNames
+          .split(',')
+          .map(
+            (subDomainName) =>
+              `${subDomainName.trim()}.${process.env.APP_DOMAIN_URL || 'domain-url.com'}`,
+          )
+      : [`${serviceName}.${process.env.APP_DOMAIN_URL}` || 'domain-url.com'];
+  } else {
+    domainUrls = [process.env.APP_DOMAIN_URL || 'domain-url.com'];
+  }
+
+  responseHeadersAccessControlAllowOrigins = process.env
+    .AWS_RESPONSE_HEADERS_ACCESS_CONTROLL_ALLOW_ORIGINS
+    ? String(process.env.AWS_RESPONSE_HEADERS_ACCESS_CONTROLL_ALLOW_ORIGINS).trim()
+    : '*';
 
   return <BaseCloudfrontArgs>{
     environment,
@@ -35,7 +56,7 @@ export default (): BaseCloudfrontArgs => {
     indexDocument: process.env.APP_INDEX_DOCUMENT || 'index.html',
     errorDocument: process.env.APP_ERROR_DOCUMENT || 'error.html',
     debug: process.env.PULUMI_DEBUG === 'true',
-    domainUrl,
+    domainUrls,
     ssl: {
       enabled: process.env.SSL_ENABLED === 'true',
       certificateArn:
@@ -63,6 +84,28 @@ export default (): BaseCloudfrontArgs => {
             value: process.env.AWS_CLUSTER_IP_BASTION_HOST || '127.0.0.1',
           },
         ],
+      },
+    },
+    responseHeaders: {
+      corsConfig: {
+        enabled: process.env.AWS_RESPONSE_HEADERS_CORS_CONFIG_ENABLED === 'true',
+        value: {
+          accessControlAllowCredentials: false,
+          accessControlAllowHeaders: {
+            items: ['*'],
+          },
+          accessControlAllowMethods: {
+            items: ['GET'],
+          },
+          accessControlAllowOrigins: {
+            items: responseHeadersAccessControlAllowOrigins
+              .split(',')
+              .map((responseHeaderAccessControlAllowOrigins) =>
+                responseHeaderAccessControlAllowOrigins.trim(),
+              ),
+          },
+          originOverride: true,
+        },
       },
     },
   };

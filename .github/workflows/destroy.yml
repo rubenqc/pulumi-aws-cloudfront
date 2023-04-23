@@ -1,4 +1,4 @@
-name: Destroy Infrastructure - Pulumi
+name: Destroy Infrastructure - Pulumi - Vault
 
 on:
   workflow_call:
@@ -86,12 +86,19 @@ jobs:
       - name: Update Pulumi version
         uses: pulumi/setup-pulumi@v2
         with:
-          pulumi-version: 3.46.1
+          pulumi-version: 3.60.1
       - name: Config Pulumi Stack
         working-directory: ./pulumi-cloudfront
         run: |
           pulumi stack select ${{ env.PULUMI_STACK }} --create
           pulumi config set aws:region ${{ secrets.AWS_REGION }}
+        env:
+          PULUMI_CONFIG_PASSPHRASE: ${{ env.PULUMI_CONFIG_PASSPHRASE }}
+          PULUMI_BACKEND_URL: '${{ env.PULUMI_BACKEND_URL }}'
+      - name: Pulumi Refresh
+        working-directory: ./pulumi-cloudfront
+        if: ${{ env.PULUMI_REFRESH_ENABLED == 'true' }}
+        run: pulumi refresh -y --non-interactive
         env:
           PULUMI_CONFIG_PASSPHRASE: ${{ env.PULUMI_CONFIG_PASSPHRASE }}
           PULUMI_BACKEND_URL: '${{ env.PULUMI_BACKEND_URL }}'

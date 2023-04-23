@@ -3,7 +3,7 @@ import * as random from '@pulumi/random';
 import * as cloudflare from '@pulumi/cloudflare';
 import * as aws from '@pulumi/aws';
 import * as synced_folder from '@pulumi/synced-folder';
-import * as domain from 'domain';
+import { local } from '@pulumi/command';
 
 export class BaseCloudfront {
   readonly args: BaseCloudfrontArgs;
@@ -29,6 +29,11 @@ export class BaseCloudfront {
             rules: [],
           },
         },
+        responseHeaders: {
+          corsConfig: {
+            enabled: false,
+          },
+        },
       },
       args,
     );
@@ -40,16 +45,92 @@ export class BaseCloudfront {
       indexDocument,
       errorDocument,
       environment,
-      domainUrl,
+      domainUrls,
       cloudflare: cf,
       ssl,
+      responseHeaders,
     } = this.args;
+
+    const current = await aws.getCallerIdentity({});
 
     const bucketName = new random.RandomPet('random', {
       prefix: projectName,
       separator: '-',
       length: 1,
     });
+
+    // Create an S3 bucket for logs
+    const bucketLog = new aws.s3.Bucket('logBucket', {
+      bucket: pulumi.interpolate`${bucketName.id}-log`,
+      acl: 'log-delivery-write',
+      serverSideEncryptionConfiguration: {
+        rule: {
+          applyServerSideEncryptionByDefault: {
+            sseAlgorithm: 'AES256',
+          },
+        },
+      },
+      loggings: [
+        {
+          targetBucket: pulumi.interpolate`${bucketName.id}-log`,
+          targetPrefix: '/log',
+        },
+      ],
+    });
+
+    const bucketLogPublicAccessBlock = new aws.s3.BucketPublicAccessBlock('bucketLogPolicy', {
+      bucket: bucketLog.id,
+
+      blockPublicAcls: true,
+      blockPublicPolicy: true,
+      restrictPublicBuckets: true,
+      ignorePublicAcls: true,
+    });
+
+    const bucketLogPolicy = new aws.s3.BucketPolicy('bucketLogPolicy', {
+      bucket: bucketLog.id,
+      policy: pulumi.jsonStringify({
+        Version: '2012-10-17',
+        Id: 'BUCKET-POLICY',
+        Statement: [
+          {
+            Sid: 'AllowSSLRequestsOnly',
+            Effect: 'Deny',
+            Principal: '*',
+            Action: 's3:*',
+            Resource: [
+              pulumi.interpolate`${bucketLog.arn}/*`,
+              pulumi.interpolate`${bucketLog.arn}`,
+            ],
+            Condition: {
+              Bool: {
+                'aws:SecureTransport': 'false',
+              },
+            },
+          },
+        ],
+      }),
+    });
+
+    const bucketLogLifecycleConfig = new aws.s3.BucketLifecycleConfigurationV2(
+      'bucketLogLifecycle',
+      {
+        bucket: bucketLog.id,
+        rules: [
+          {
+            id: 'glacier',
+            status: 'Enabled',
+
+            transitions: [
+              {
+                days: 60,
+                storageClass: 'GLACIER',
+              },
+            ],
+          },
+        ],
+      },
+    );
 
     // Create an S3 bucket and configure it as a website.
     const bucket = new aws.s3.Bucket('bucket', {
@@ -59,6 +140,25 @@ export class BaseCloudfront {
       versioning: {
         enabled: true,
       },
+      lifecycleRules: [
+        {
+          prefix: 'config/',
+          enabled: true,
+          noncurrentVersionTransitions: [
+            {
+              days: 30,
+              storageClass: 'STANDARD_IA',
+            },
+            {
+              days: 60,
+              storageClass: 'GLACIER',
+            },
+          ],
+          noncurrentVersionExpiration: {
+            days: 90,
+          },
+        },
+      ],
       serverSideEncryptionConfiguration: {
         rule: {
           applyServerSideEncryptionByDefault: {
@@ -68,31 +168,15 @@ export class BaseCloudfront {
       },
       website: {
         indexDocument: indexDocument,
-        errorDocument: indexDocument,
+        errorDocument: errorDocument,
       },
+      loggings: [
+        {
+          targetBucket: bucketLog.id,
+          targetPrefix: 'log/',
+        },
+      ],
     });
-
-    const bucketPublicAccessBlock = new aws.s3.BucketPublicAccessBlock(
-      's3BucketPublicAccessPolicy',
-      {
-        bucket: bucket.id,
-        blockPublicAcls: true,
-        blockPublicPolicy: true,
-        ignorePublicAcls: true,
-        restrictPublicBuckets: true,
-      },
-    );
-
-    // Use a synced folder to manage the files of the website.
-    const bucketFolder = new synced_folder.S3BucketFolder('bucket-folder', {
-      path: dirPath,
-      bucketName: bucket.bucket,
-      acl: 'private',
-    });
-
-    const currentPartition = await aws.getPartition({});
-    const currentAccount = await aws.getCallerIdentity({});
-    const region = await aws.getRegion({});
 
     const originResponseLogGroup = new aws.cloudwatch.LogGroup('origin-response-log-group', {
       name: `/aws/lambda/${projectName}-originResponse`,
@@ -169,27 +253,98 @@ export class BaseCloudfront {
       },
     );
 
-    const originAccessControl = new aws.cloudfront.OriginAccessControl('example', {
-      name: `access-control-${projectName}`,
-      description: 'Cloudfront access control',
-      originAccessControlOriginType: 's3',
-      signingBehavior: 'always',
-      signingProtocol: 'sigv4',
+    const bucketPublicAccessBlock = new aws.s3.BucketPublicAccessBlock('bucketPolicy', {
+      bucket: bucket.id,
+
+      blockPublicAcls: true,
+      blockPublicPolicy: true,
+      restrictPublicBuckets: true,
+      ignorePublicAcls: true,
     });
+
+    const cloudfrontCachePolicy = new aws.cloudfront.CachePolicy('cloudfrontCachePolicy', {
+      name: `${projectName}-cache-policy`,
+      defaultTtl: 86400,
+      maxTtl: 31536000,
+      minTtl: 1,
+      parametersInCacheKeyAndForwardedToOrigin: {
+        cookiesConfig: {
+          cookieBehavior: 'none',
+        },
+        headersConfig: {
+          headerBehavior: 'none',
+        },
+        queryStringsConfig: {
+          queryStringBehavior: 'none',
+        },
+        enableAcceptEncodingGzip: true,
+        enableAcceptEncodingBrotli: true,
+      },
+    });
+
+    const cloudfrontOriginAccessControl = new aws.cloudfront.OriginAccessControl(
+      'originAccessControl',
+      {
+        name: `access-control-${projectName}`,
+        description: 'Cloudfront access control',
+        originAccessControlOriginType: 's3',
+        signingBehavior: 'always',
+        signingProtocol: 'sigv4',
+      },
+    );
+
+    const cloudfrontOriginRequestPolicy = new aws.cloudfront.OriginRequestPolicy('cdn', {
+      name: `${projectName}-CORS-S3Origin`,
+      cookiesConfig: {
+        cookieBehavior: 'none',
+      },
+      queryStringsConfig: {
+        queryStringBehavior: 'none',
+      },
+      headersConfig: {
+        headerBehavior: 'whitelist',
+        headers: {
+          items: [
+            'Origin',
+            'Access-Control-Request-Headers',
+            'Access-Control-Request-Method',
+            // 'x-prerender-path',
+            // 'x-is-sitemap',
+            // 'x-is-robots',
+            // 'Referer',
+            // 'Host',
+          ],
+        },
+      },
+    });
+
+    const cloudfrontResponseHeaderPolicy = new aws.cloudfront.ResponseHeadersPolicy(
+      'cloudfrontResponseHeaders',
+      {
+        name: `${projectName}-cdn-response-headers-policy`,
+        securityHeadersConfig: {
+          frameOptions: {
+            frameOption: 'SAMEORIGIN',
+            override: true,
+          },
+        },
+        corsConfig: responseHeaders.corsConfig.enabled
+          ? responseHeaders.corsConfig.value
+          : undefined,
+      },
+    );
 
     // Create a CloudFront CDN to distribute and cache the website.
     const cdn = new aws.cloudfront.Distribution('cdn', {
       enabled: true,
       origins: [
         {
-          domainName: bucket.websiteEndpoint,
-          originId: bucket.arn,
-          originAccessControlId: originAccessControl.id,
+          originId: bucket.id,
+          domainName: pulumi.interpolate`${bucketName.id}.s3.amazonaws.com`,
+          originAccessControlId: cloudfrontOriginAccessControl.id,
         },
       ],
       defaultCacheBehavior: {
-        targetOriginId: bucket.arn,
-        viewerProtocolPolicy: 'redirect-to-https',
         allowedMethods: ['GET', 'HEAD', 'OPTIONS'],
         cachedMethods: ['GET', 'HEAD', 'OPTIONS'],
         defaultTtl: 600,
@@ -207,12 +362,21 @@ export class BaseCloudfront {
             lambdaArn: originResponseLambda.qualifiedArn,
           },
         ],
+        targetOriginId: bucket.id,
+
+        viewerProtocolPolicy: 'redirect-to-https',
+        compress: true,
+
+        originRequestPolicyId: cloudfrontOriginRequestPolicy.id,
+        cachePolicyId: cloudfrontCachePolicy.id,
+
+        responseHeadersPolicyId: cloudfrontResponseHeaderPolicy.id,
       },
-      priceClass: 'PriceClass_All',
       customErrorResponses: [
         {
+          errorCachingMinTtl: 0,
           errorCode: 404,
-          responseCode: 404,
+          responseCode: 200,
           responsePagePath: `/${errorDocument}`,
         },
       ],
@@ -221,13 +385,13 @@ export class BaseCloudfront {
           restrictionType: 'none',
         },
       },
-      aliases: [domainUrl],
+      aliases: domainUrls,
+      defaultRootObject: indexDocument,
       viewerCertificate: {
         sslSupportMethod: 'sni-only',
         acmCertificateArn: ssl.enabled ? ssl.certificateArn : undefined,
         minimumProtocolVersion: 'TLSv1.2_2021',
       },
-      httpVersion: 'http2',
     });
 
     const bucketPolicy = new aws.s3.BucketPolicy('bucketPolicy', {
@@ -240,7 +404,7 @@ export class BaseCloudfront {
             Sid: 'AllowSSLRequestsOnly',
             Effect: 'Deny',
             Principal: '*',
-            Action: ['s3:*'],
+            Action: 's3:*',
             Resource: [pulumi.interpolate`${bucket.arn}/*`, pulumi.interpolate`${bucket.arn}`],
             Condition: {
               Bool: {
@@ -253,7 +417,7 @@ export class BaseCloudfront {
             Effect: 'Allow',
             Principal: {
               Service: 'cloudfront.amazonaws.com',
-            },
+            }, // Only allow Cloudfront read access.
             Action: 's3:GetObject',
             Resource: [pulumi.interpolate`${bucket.arn}/*`, pulumi.interpolate`${bucket.arn}`],
             Condition: {
@@ -266,7 +430,7 @@ export class BaseCloudfront {
             Sid: '2',
             Effect: 'Allow',
             Principal: {
-              AWS: [currentAccount.arn],
+              AWS: [current.arn],
             },
             Action: [
               's3:GetObject',
@@ -282,6 +446,19 @@ export class BaseCloudfront {
       }),
     });
 
+    // Use a synced folder to manage the files of the website.
+    const bucketFolder = new synced_folder.S3BucketFolder(
+      'bucket-folder',
+      {
+        path: dirPath,
+        bucketName: bucket.bucket,
+        acl: 'private',
+      },
+      {
+        dependsOn: bucketPolicy,
+      },
+    );
+
     if (cf.record.enabled || cf.acl.enabled) {
       const cfProvider = new cloudflare.Provider('cloudflare', {
         apiKey: process.env.CLOUDFLARE_API_KEY,
@@ -293,7 +470,7 @@ export class BaseCloudfront {
         const record = new cloudflare.Record(
           'cloudflare-record',
           {
-            name: domainUrl,
+            name: domainUrls[0], // create only the first domain
             zoneId: cf.zoneId,
             type: 'CNAME',
             value: cdn.domainName,
@@ -317,7 +494,7 @@ export class BaseCloudfront {
             })),
             description: `Restrict access to ${projectName} webapp`,
             paused: false,
-            urls: [`${domainUrl}/*`],
+            urls: domainUrls.map((domainUrl) => `${domainUrl}/*`),
             zoneId: cf.zoneId,
           },
           {
@@ -326,6 +503,17 @@ export class BaseCloudfront {
         );
       }
     }
+
+    // create cache invalidation
+    const invalidationCommand = new local.Command(
+      `invalidate-${new Date().getTime()}`,
+      {
+        create: pulumi.interpolate`aws cloudfront create-invalidation --distribution-id ${cdn.id} --paths "/*"`,
+      },
+      {
+        dependsOn: [bucketFolder, cdn],
+      },
+    );
 
     return {
       cdnDomainName: cdn.domainName,
@@ -339,7 +527,7 @@ export interface BaseCloudfrontArgs {
   indexDocument: string;
   errorDocument: string;
   environment: string;
-  domainUrl: string;
+  domainUrls: string[];
   debug: boolean;
   ssl: {
     enabled: boolean;
@@ -357,6 +545,24 @@ export interface BaseCloudfrontArgs {
         name: string;
         value: string;
       }[];
+    };
+  };
+  responseHeaders: {
+    corsConfig: {
+      enabled: boolean;
+      value: {
+        accessControlAllowCredentials: boolean;
+        accessControlAllowHeaders: {
+          items: string[];
+        };
+        accessControlAllowMethods: {
+          items: string[];
+        };
+        accessControlAllowOrigins: {
+          items: string[];
+        };
+        originOverride: boolean;
+      };
     };
   };
 }
