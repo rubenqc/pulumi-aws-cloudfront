@@ -178,8 +178,20 @@ export class BaseCloudfront {
       ],
     });
 
+    const currentPartition = await aws.getPartition({});
+    const currentAccount = await aws.getCallerIdentity({});
+    const region = await aws.getRegion({});
+
     const originResponseLogGroup = new aws.cloudwatch.LogGroup('origin-response-log-group', {
       name: `/aws/lambda/${projectName}-originResponse`,
+      tags: {
+        Application: projectName,
+        Environment: environment,
+      },
+    });
+
+    const viewerRequestLogGroup = new aws.cloudwatch.LogGroup('viewer-request-log-group', {
+      name: `/aws/lambda/${projectName}-viewerRequest`,
       tags: {
         Application: projectName,
         Environment: environment,
@@ -210,19 +222,9 @@ export class BaseCloudfront {
         Version: '2012-10-17',
         Statement: [
           {
-            Action: ['logs:CreateLogStream', 'logs:CreateLogGroup'],
+            Action: ['logs:CreateLogStream', 'logs:PutLogEvents', 'logs:CreateLogGroup'],
             Effect: 'Allow',
-            Resource: `arn:${currentPartition.partition}:logs:${region.name}:${currentAccount.accountId}:log-group:/aws/lambda/${projectName}*:*`,
-          },
-          {
-            Action: ['logs:PutLogEvents'],
-            Effect: 'Allow',
-            Resource: `arn:${currentPartition.partition}:logs:${region.name}:${currentAccount.accountId}:log-group:/aws/lambda/${projectName}*:*:*`,
-          },
-          {
-            Action: ['logs:CreateLogGroup', 'logs:CreateLogStream', 'logs:PutLogEvents'],
-            Effect: 'Allow',
-            Resource: `arn:${currentPartition.partition}:logs:*:*:*`,
+            Resource: '*',
           },
         ],
       }),
@@ -241,7 +243,7 @@ export class BaseCloudfront {
           '.': new pulumi.asset.FileArchive('./handler'),
         }),
         name: `${projectName}-originResponse`,
-        handler: 'originResponse.js',
+        handler: 'originResponse.handler',
         runtime: 'nodejs14.x',
         memorySize: 128,
         timeout: 5,
@@ -250,6 +252,26 @@ export class BaseCloudfront {
       },
       {
         dependsOn: originResponseLogGroup,
+      },
+    );
+
+    // Lambda Viewer Request
+    const viewerRequestLambda = new aws.lambda.Function(
+      'viewer-request',
+      {
+        code: new pulumi.asset.AssetArchive({
+          '.': new pulumi.asset.FileArchive('./handler'),
+        }),
+        name: `${projectName}-viewerRequest`,
+        handler: 'viewerRequest.handler',
+        runtime: 'nodejs14.x',
+        memorySize: 128,
+        timeout: 5,
+        publish: true,
+        role: iamRoleLambdaExecution.arn,
+      },
+      {
+        dependsOn: viewerRequestLogGroup,
       },
     );
 
@@ -350,16 +372,16 @@ export class BaseCloudfront {
         defaultTtl: 600,
         maxTtl: 600,
         minTtl: 600,
-        forwardedValues: {
-          queryString: true,
-          cookies: {
-            forward: 'all',
-          },
-        },
         lambdaFunctionAssociations: [
           {
             eventType: 'origin-response',
             lambdaArn: originResponseLambda.qualifiedArn,
+            includeBody: false,
+          },
+          {
+            eventType: 'viewer-request',
+            lambdaArn: viewerRequestLambda.qualifiedArn,
+            includeBody: false,
           },
         ],
         targetOriginId: bucket.id,
