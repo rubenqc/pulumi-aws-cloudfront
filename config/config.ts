@@ -108,5 +108,9 @@ export default (): BaseCloudfrontArgs => {
         },
       },
     },
+    redirects: {
+      enabled: process.env.APP_REDIRECTS_ENABLED === 'true',
+      rules: process.env.APP_REDIRECTS_RULES ? JSON.parse(process.env.APP_REDIRECTS_RULES) : {},
+    },
   };
 };

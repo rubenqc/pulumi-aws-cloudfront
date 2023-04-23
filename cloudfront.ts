@@ -4,6 +4,7 @@ import * as cloudflare from '@pulumi/cloudflare';
 import * as aws from '@pulumi/aws';
 import * as synced_folder from '@pulumi/synced-folder';
 import { local } from '@pulumi/command';
+import { writeFileSync } from 'fs';
 
 export class BaseCloudfront {
   readonly args: BaseCloudfrontArgs;
@@ -34,6 +35,10 @@ export class BaseCloudfront {
             enabled: false,
           },
         },
+        redirects: {
+          enabled: false,
+          rules: [],
+        },
       },
       args,
     );
@@ -49,7 +54,15 @@ export class BaseCloudfront {
       cloudflare: cf,
       ssl,
       responseHeaders,
+      redirects,
     } = this.args;
+
+    // create file for redirects
+    let redirectRules: { src: string; dst: string }[] = [];
+    if (redirects.enabled) {
+      redirectRules = redirects.rules;
+    }
+    await writeFileSync('./handler/redirectRules.json', JSON.stringify(redirectRules));
 
     const current = await aws.getCallerIdentity({});
 
@@ -586,5 +599,12 @@ export interface BaseCloudfrontArgs {
         originOverride: boolean;
       };
     };
+  };
+  redirects: {
+    enabled: boolean;
+    rules: {
+      src: string;
+      dst: string;
+    }[];
   };
 }
