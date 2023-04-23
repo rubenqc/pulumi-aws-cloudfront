@@ -14,6 +14,7 @@ export class BaseCloudfront {
         dirPath: './dist',
         indexDocument: 'index.html',
         errorDocument: 'error.html',
+        environment: 'development',
         ssl: {
           enabled: false,
         },
@@ -43,6 +44,7 @@ export class BaseCloudfront {
       dirPath,
       indexDocument,
       errorDocument,
+      environment,
       domainUrls,
       cloudflare: cf,
       ssl,
@@ -176,6 +178,81 @@ export class BaseCloudfront {
       ],
     });
 
+    const originResponseLogGroup = new aws.cloudwatch.LogGroup('origin-response-log-group', {
+      name: `/aws/lambda/${projectName}-originResponse`,
+      tags: {
+        Application: projectName,
+        Environment: environment,
+      },
+    });
+
+    // Iam Role Lambda Function
+    const iamRoleLambdaExecution = new aws.iam.Role('iamRoleLambdaExecution', {
+      name: `${projectName}-${region.name}-lambdaRole`,
+      path: '/',
+      assumeRolePolicy: JSON.stringify({
+        Version: '2012-10-17',
+        Statement: [
+          {
+            Action: 'sts:AssumeRole',
+            Effect: 'Allow',
+            Principal: {
+              Service: ['lambda.amazonaws.com', 'edgelambda.amazonaws.com'],
+            },
+          },
+        ],
+      }),
+    });
+
+    const policyLambdaExecution = new aws.iam.Policy('policyLambdaExecution', {
+      name: `${projectName}-lambda`,
+      policy: JSON.stringify({
+        Version: '2012-10-17',
+        Statement: [
+          {
+            Action: ['logs:CreateLogStream', 'logs:CreateLogGroup'],
+            Effect: 'Allow',
+            Resource: `arn:${currentPartition.partition}:logs:${region.name}:${currentAccount.accountId}:log-group:/aws/lambda/${projectName}*:*`,
+          },
+          {
+            Action: ['logs:PutLogEvents'],
+            Effect: 'Allow',
+            Resource: `arn:${currentPartition.partition}:logs:${region.name}:${currentAccount.accountId}:log-group:/aws/lambda/${projectName}*:*:*`,
+          },
+          {
+            Action: ['logs:CreateLogGroup', 'logs:CreateLogStream', 'logs:PutLogEvents'],
+            Effect: 'Allow',
+            Resource: `arn:${currentPartition.partition}:logs:*:*:*`,
+          },
+        ],
+      }),
+    });
+
+    const attachPolicy = new aws.iam.PolicyAttachment('attach-policy', {
+      roles: [iamRoleLambdaExecution.name],
+      policyArn: policyLambdaExecution.arn,
+    });
+
+    // Lambda Origin Response
+    const originResponseLambda = new aws.lambda.Function(
+      'origin-response',
+      {
+        code: new pulumi.asset.AssetArchive({
+          '.': new pulumi.asset.FileArchive('./handler'),
+        }),
+        name: `${projectName}-originResponse`,
+        handler: 'originResponse.js',
+        runtime: 'nodejs14.x',
+        memorySize: 128,
+        timeout: 5,
+        publish: true,
+        role: iamRoleLambdaExecution.arn,
+      },
+      {
+        dependsOn: originResponseLogGroup,
+      },
+    );
+
     const bucketPublicAccessBlock = new aws.s3.BucketPublicAccessBlock('bucketPolicy', {
       bucket: bucket.id,
 
@@ -270,6 +347,21 @@ export class BaseCloudfront {
       defaultCacheBehavior: {
         allowedMethods: ['GET', 'HEAD', 'OPTIONS'],
         cachedMethods: ['GET', 'HEAD', 'OPTIONS'],
+        defaultTtl: 600,
+        maxTtl: 600,
+        minTtl: 600,
+        forwardedValues: {
+          queryString: true,
+          cookies: {
+            forward: 'all',
+          },
+        },
+        lambdaFunctionAssociations: [
+          {
+            eventType: 'origin-response',
+            lambdaArn: originResponseLambda.qualifiedArn,
+          },
+        ],
         targetOriginId: bucket.id,
 
         viewerProtocolPolicy: 'redirect-to-https',
@@ -305,7 +397,7 @@ export class BaseCloudfront {
     const bucketPolicy = new aws.s3.BucketPolicy('bucketPolicy', {
       bucket: bucket.id,
       policy: pulumi.jsonStringify({
-        Version: '2012-10-17',
+        Version: '2008-10-17',
         Id: 'BUCKET-POLICY',
         Statement: [
           {
@@ -434,6 +526,7 @@ export interface BaseCloudfrontArgs {
   dirPath: string;
   indexDocument: string;
   errorDocument: string;
+  environment: string;
   domainUrls: string[];
   debug: boolean;
   ssl: {
